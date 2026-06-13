@@ -21,7 +21,10 @@ return [
     'paystack' => [
       'secret_key' => env('PAYSTACK_SECRET_KEY'),
     ],
-
+      'openai' => [
+        'key' => env('OPENAI_API_KEY'),
+      ],
+      
     'resend' => [
         'key' => env('RESEND_API_KEY'),
     ],

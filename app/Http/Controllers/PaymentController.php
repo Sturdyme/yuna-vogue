@@ -3,113 +3,158 @@
 namespace App\Http\Controllers;
 
 use App\Models\Order;
+use App\Models\OrderItem;
 use App\Models\Payment;
 use App\Services\PaystackService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 class PaymentController extends Controller
 {
     public function initialize(Request $request, PaystackService $paystack)
-{
-    // 1. Validate the incoming request
-    $request->validate([
-        'amount' => 'required|numeric|min:1',
-    ]);
+    {
+        $request->validate([
+            'items' => 'required|array|min:1',
+        ]);
 
-    // 2. Capture the Naira amount from React
-    $nairaAmount = $request->amount;
+        $subtotal = 0;
 
-    // 3. Convert to Kobo (Integer) for Paystack
-    // Using round() and (int) ensures no decimals are sent
-    $koboAmount = (int) round($nairaAmount * 1000);
+        foreach ($request->items as $item) {
+            $subtotal += $item['price'] * $item['quantity'];
+        }
 
-    // 4. Create the Order
-    $order = Order::create([
-        'user_id' => auth()->id(),
-        'amount' => $nairaAmount, // Store the human-readable Naira amount
-        'status' => 'pending',
-    ]);
+        $shipping = $subtotal * 0.15;
+        $totalAmount = $subtotal + $shipping;
 
-    // 5. Initialize Paystack
+           $koboAmount = (int) round($totalAmount * 100);
 
-    $paymentData = $paystack->initialize([
-        'email' => auth()->user()->email,
-        'amount' => $koboAmount, // Pass the converted Kobo amount
-        'metadata' => [
-            'order_id' => $order->id
-        ]
-    ]);
+        $reference = 'YUNA_' . Str::random(12);
 
-    // 6. Create the Payment Record
-    Payment::create([
-        'user_id' => auth()->id(),
-        'order_id' => $order->id,
-        'reference' => $paymentData['reference'],
-        'amount' => $nairaAmount, // Store Naira amount
-        'status' => 'pending',
-    ]);
-   
-    // 7. Handle Response
-    if ($request->expectsJson()) {
+        $user = auth()->user();
+
+        if (!$user) {
+            return response()->json([
+                'message' => 'Unauthenticated'
+            ], 401);
+        }
+
+     
+
+        // ✅ CREATE ORDER
+        $order = Order::create([
+            'user_id' => $user->id,   // FIXED
+            'reference' => $reference,
+            'subtotal' => $subtotal,
+            'shipping' => $shipping,
+            'total_amount' => $totalAmount,
+            'status' => 'pending',
+        ]);
+
+         foreach ($request->items as $item) {
+
+         OrderItem::create([
+            'order_id' => $order->id,
+            'product_id' => $item['product_id'] ?? $item['id'],
+            'product_name' => $item['name'] ?? $item['title'] ?? 'Unknown Product',
+            'quantity' => $item['quantity'],
+            'price' => $item['price'],
+         ]);
+         }
+
+        
+
+        // ✅ INIT PAYSTACK (EMAIL REQUIRED)
+        $paymentData = $paystack->initialize([
+            'email' => $user->email,  // FIXED (Paystack requirement)
+            'amount' => $koboAmount,
+            'reference' => $reference,
+            'metadata' => [
+                'order_id' => $order->id,
+            ]
+        ]);
+
+        // ✅ STORE PAYMENT
+        Payment::create([
+            'user_id' => $user->id,
+            'order_id' => $order->id,
+            'reference' => $reference,
+            'amount' => $totalAmount,
+            'status' => 'pending',
+            
+        ]);
+
         return response()->json([
             'authorization_url' => $paymentData['authorization_url']
         ]);
     }
 
-    return redirect($paymentData['authorization_url']);
-}
-
-     public function verify($reference, PaystackService $paystack)
-     {
+    public function verify($reference, PaystackService $paystack)
+    {
         $response = $paystack->verify($reference);
 
-        if ($response['data'] ['status'] === 'success') {
-            $payment = Payment::where('reference', $reference)->first();
-            $payment->update(['status' => 'success']);
+        if (
+            isset($response['status']) &&
+            $response['status'] === true &&
+            isset($response['data']) &&
+            $response['data']['status'] === 'success'
+        ) {
+            $this->completeOrder(
+                $reference,
+                $response['data']['metadata']['order_id'] ?? null
+            );
 
-            $orderId = $response['data']['metadata']['order_id'];
-
-            Order::where('id', $orderId)->update([
-                'status' => 'paid',
-                'payment_reference' => $reference
-            ]);
-
-            return response()->json([
-                'status' => 'success'
-            ]);
+            return response()->json(['status' => 'success']);
         }
-        return response()->json([
-            'status' => 'failed'
-        ]);
-     }
 
-    /**
-     * Paystack payment callback handler
-     * Verifies payment and updates order status
-     */
+        return response()->json([
+            'status' => 'failed',
+            'message' => $response['message'] ?? 'Payment verification failed'
+        ], 400);
+    }
+
     public function callback(Request $request, PaystackService $paystack)
     {
         $reference = $request->query('reference');
+
         if (!$reference) {
-            return response()->json(['status' => 'failed', 'message' => 'No reference supplied'], 400);
+            return response()->json([
+                'status' => 'failed',
+                'message' => 'No reference supplied'
+            ], 400);
         }
 
         $response = $paystack->verify($reference);
 
-        if (isset($response['data']['status']) && $response['data']['status'] === 'success') {
-            $payment = Payment::where('reference', $reference)->first();
-            if ($payment) {
-                $payment->update(['status' => 'success']);
-                $orderId = $response['data']['metadata']['order_id'] ?? null;
-                if ($orderId) {
-                    Order::where('id', $orderId)->update([
-                        'status' => 'paid',
-                        'payment_reference' => $reference
-                    ]);
-                }
-            }
-            return response()->json(['status' => 'success']);
+        if (
+            isset($response['status']) &&
+            $response['status'] === true &&
+            isset($response['data']) &&
+            $response['data']['status'] === 'success'
+        ) {
+            $this->completeOrder(
+                $reference,
+                $response['data']['metadata']['order_id'] ?? null
+            );
+
+            return redirect("http://localhost:5173/payment-success?reference={$reference}");
         }
-        return response()->json(['status' => 'failed', 'message' => 'Payment verification failed']);
+
+        return redirect("http://localhost:5173/payment-success?status=failed");
+    }
+
+    private function completeOrder($reference, $orderId)
+    {
+        if (!$orderId) return;
+
+        $payment = Payment::where('reference', $reference)->first();
+
+        if ($payment) {
+            $payment->update(['status' => 'success']);
+        }
+
+        Order::where('id', $orderId)->update([
+            'status' => 'completed',
+            
+        ]);
     }
 }

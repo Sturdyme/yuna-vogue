@@ -3,7 +3,10 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\SendOtpEmailJob;
+use App\Models\User;
 use App\Services\AuthService;
+use App\Services\OtpService;
 use Illuminate\Http\Request;
 
 class AuthController extends Controller
@@ -15,39 +18,67 @@ class AuthController extends Controller
         $this->authService = $authService;
     }
 
-    public function register(Request $request)
-    {
-        $request->validate([
-            'name' => 'required|string',
-            'email' => 'required|email|unique:users',
-            'password' => 'required|confirmed|min:6',
-        ]);
+   public function register(Request $request, OtpService $otpService)
+{
+    $request->validate([
+        'name' => 'required|string',
+        'email' => 'required|email|unique:users',
+        'password' => 'required|confirmed|min:6',
+    ]);
 
-        $data = $this->authService->register($request->all());
+    $user = User::create([
+        'name' => $request->name,
+        'email' => $request->email,
+        'password' => bcrypt($request->password),
+        'is_verified' => false,
+    ]);
 
+    $token = $user->createToken('auth_token')->plainTextToken;
+
+    $otpRecord = $otpService->createOtp($user->email);
+
+    SendOtpEmailJob::dispatch($user->email, $otpRecord->otp);
+
+    return response()->json([
+        'message' => 'Account created. Please verify OTP sent to your email.',
+        "token" => $token,
+        'user' => [
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'is_verified' => false,
+        ]
+    
+    ]);
+}
+
+ public function login(Request $request)
+{
+    $request->validate([
+        'email' => 'required|email',
+        'password' => 'required'
+    ]);
+
+    $user = User::where('email', $request->email)->first();
+
+    if (!$user || !\Hash::check($request->password, $user->password)) {
         return response()->json([
-            'message' => 'User registered successfully',
-            'user' => $data['user'],
-            'token' => $data['token']
-        ], 201);
+            'message' => 'Invalid credentials'
+        ], 401);
     }
 
-    public function login(Request $request)
-    {
-        $request->validate([
-            'email' => 'required|email',
-            'password' => 'required'
-        ]);
-   
-        $data = $this->authService->login($request->all());
+    $token = $user->createToken('auth_token')->plainTextToken;
 
-        return response()->json([
-            'message' => 'Login successful',
-            'user' => $data['user'],
-            'token' => $data['token']
-
-        ]);
-
+    return response()->json([
+        'message' => 'Login successful',
+        'user' => [
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'is_verified' => (bool) $user->is_verified,
+        ],
+        'token' => $token
+    ]);
 }
 
        public function logout(Request $request) 
