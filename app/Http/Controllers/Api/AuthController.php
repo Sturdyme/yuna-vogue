@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Jobs\SendOtpEmailJob;
 use App\Models\User;
+use App\Notifications\SendOTPNotification;
 use App\Services\AuthService;
 use App\Services\OtpService;
 use Illuminate\Http\Request;
@@ -33,11 +34,17 @@ class AuthController extends Controller
         'is_verified' => false,
     ]);
 
+     $otpRecord = $otpService->createOtp($user->email);
+
+     SendOtpEmailJob::dispatch(
+        $user->email,
+        $otpRecord->otp
+     );
+
     $token = $user->createToken('auth_token')->plainTextToken;
 
-    $otpRecord = $otpService->createOtp($user->email);
+   
 
-    SendOtpEmailJob::dispatch($user->email, $otpRecord->otp);
 
     return response()->json([
         'message' => 'Account created. Please verify OTP sent to your email.',
@@ -63,7 +70,7 @@ class AuthController extends Controller
 
     if (!$user || !\Hash::check($request->password, $user->password)) {
         return response()->json([
-            'message' => 'Invalid credentials'
+            'message' => 'Invalid email or password'
         ], 401);
     }
 
