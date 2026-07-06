@@ -76,11 +76,10 @@ class PaymentController extends Controller
         // ✅ STORE PAYMENT
         Payment::create([
             'user_id' => $user->id,
-            'order_id' => $order->id,
+            'order_id' => $order->id ?? null,
             'reference' => $reference,
             'amount' => $totalAmount,
             'status' => 'pending',
-            
         ]);
 
         return response()->json([
