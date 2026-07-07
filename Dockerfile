@@ -18,6 +18,13 @@ RUN composer install --no-dev --optimize-autoloader --no-scripts --ignore-platfo
 RUN chmod -R 775 storage bootstrap/cache
 RUN chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache
 
+# ==================== NEW ENTRYPOINT ====================
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 EXPOSE 10000
 
-CMD php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=$PORT
+ENTRYPOINT ["docker-entrypoint.sh"]
+
+# Default command (will be executed by the entrypoint)
+CMD ["php", "artisan", "serve", "--host=0.0.0.0", "--port=$PORT"]
