@@ -50,16 +50,19 @@ class PaymentController extends Controller
             'status' => 'pending',
         ]);
 
-         foreach ($request->items as $item) {
+        if (!$order) {
+            return response()->json(['error' => 'Order creation failed'], 500);
+        }
 
-         OrderItem::create([
-            'order_id' => $order->id,
-            'product_id' => $item['product_id'] ?? $item['id'],
-            'product_name' => $item['name'] ?? $item['title'] ?? 'Unknown Product',
-            'quantity' => $item['quantity'],
-            'price' => $item['price'],
-         ]);
-         }
+        foreach ($request->items as $item) {
+            OrderItem::create([
+                'order_id' => $order->id,
+                'product_id' => $item['product_id'] ?? $item['id'],
+                'product_name' => $item['name'] ?? $item['title'] ?? 'Unknown Product',
+                'quantity' => $item['quantity'],
+                'price' => $item['price'],
+            ]);
+        }
 
         
 
@@ -73,6 +76,7 @@ class PaymentController extends Controller
             ]
         ]);
 
+
         // ✅ STORE PAYMENT
         Payment::create([
             'user_id' => $user->id,
@@ -82,9 +86,7 @@ class PaymentController extends Controller
             'status' => 'pending',
         ]);
 
-        if (!$order) {
-            return response()->json(['error' => 'Order not found'], 400);
-        }
+       
 
         return response()->json([
             'authorization_url' => $paymentData['authorization_url']
