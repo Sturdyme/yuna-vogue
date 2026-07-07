@@ -76,11 +76,15 @@ class PaymentController extends Controller
         // ✅ STORE PAYMENT
         Payment::create([
             'user_id' => $user->id,
-            'order_id' => $order->id ?? null,
+            'order_id' => $order->id,
             'reference' => $reference,
             'amount' => $totalAmount,
             'status' => 'pending',
         ]);
+
+        if (!$order) {
+            return response()->json(['error' => 'Order not found'], 400);
+        }
 
         return response()->json([
             'authorization_url' => $paymentData['authorization_url']
